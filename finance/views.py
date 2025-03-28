@@ -1,20 +1,14 @@
 import csv
-
-from django.shortcuts import render
-from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Sum
 from django.http import HttpResponse
-
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from .models import Category, Transaction
-
-from .serializers import TransactionSerializer
-from .serializers import CategorySerializer
-
+from .serializers import TransactionSerializer, CategorySerializer
 from .filters import TransactionFilter
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -26,28 +20,22 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return Category.objects.filter(user=self.request.user)
 
 class TransactionViewSet(viewsets.ModelViewSet):
-    serializer_class = TransactionSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return Transaction.objects.filter(user=self.request.user)
-
-class TransactionViewSet(viewsets.ModelViewSet):
     queryset = Transaction.objects.all()
     serializer_class = TransactionSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_class = TransactionFilter
 
+    def get_queryset(self):
+        return Transaction.objects.filter(user=self.request.user)
+
 class AnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         transactions = Transaction.objects.filter(user=request.user)
-
         total_income = transactions.filter(type='income').aggregate(Sum('amount'))['amount__sum'] or 0
         total_expense = transactions.filter(type='expense').aggregate(Sum('amount'))['amount__sum'] or 0
-
         category_summary = transactions.values('category__name').annotate(total=Sum('amount'))
 
         return Response({
@@ -55,7 +43,7 @@ class AnalyticsView(APIView):
             "total_expense": total_expense,
             "category_summary": list(category_summary),
         })
-    
+
 class ExportCSVView(APIView):
     permission_classes = [IsAuthenticated]
 
