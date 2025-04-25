@@ -1,81 +1,77 @@
 from rest_framework.viewsets import ModelViewSet
+from django.utils.decorators import method_decorator
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from django.utils.decorators import method_decorator
-from drf_yasg.utils import swagger_auto_schema
 from django.db.models import Sum
 from django.http import HttpResponse
+from drf_yasg.utils import swagger_auto_schema
 import csv
 
 from .models import Category, Transaction
 from .serializers import CategorySerializer, TransactionSerializer
 from .filters import TransactionFilter
 
-@method_decorator(name='list', decorator=swagger_auto_schema(
-    operation_description="Возвращает список всех категорий пользователя.",
-    operation_summary="Список категорий",
-))
-@method_decorator(name='create', decorator=swagger_auto_schema(
-    operation_description="Создаёт новую категорию.",
-    operation_summary="Создание категории",
-))
-@method_decorator(name='retrieve', decorator=swagger_auto_schema(
-    operation_description="Возвращает конкретную категорию.",
-    operation_summary="Детали категории",
-))
-@method_decorator(name='update', decorator=swagger_auto_schema(
-    operation_description="Обновляет категорию.",
-    operation_summary="Обновление категории",
-))
-@method_decorator(name='partial_update', decorator=swagger_auto_schema(
-    operation_description="Частично обновляет категорию.",
-    operation_summary="Частичное обновление категории",
-))
-@method_decorator(name='destroy', decorator=swagger_auto_schema(
-    operation_description="Удаляет категорию.",
-    operation_summary="Удаление категории",
-))
-class CategoryViewSet(ModelViewSet):
-    serializer_class = CategorySerializer
+# Словарь с описаниями операций для Swagger
+SWAGGER_OPERATIONS = {
+    'list': {
+        'description': "Возвращает список всех {entity} пользователя.",
+        'summary': "Список {entity}",
+    },
+    'create': {
+        'description': "Создаёт новую {entity}.",
+        'summary': "Создание {entity}",
+    },
+    'retrieve': {
+        'description': "Возвращает конкретную {entity}.",
+        'summary': "Детали {entity}",
+    },
+    'update': {
+        'description': "Обновляет {entity}.",
+        'summary': "Обновление {entity}",
+    },
+    'partial_update': {
+        'description': "Частично обновляет {entity}.",
+        'summary': "Частичное обновление {entity}",
+    },
+    'destroy': {
+        'description': "Удаляет {entity}.",
+        'summary': "Удаление {entity}",
+    }
+}
+
+def apply_swagger_decorators(entity_name):
+    """Динамически создаёт декораторы для методов ViewSet."""
+    def decorator(cls):
+        for method, config in SWAGGER_OPERATIONS.items():
+            description = config['description'].format(entity=entity_name)
+            summary = config['summary'].format(entity=entity_name)
+            cls = method_decorator(
+                name=method,
+                decorator=swagger_auto_schema(operation_description=description, operation_summary=summary)
+            )(cls)
+        return cls
+    return decorator
+
+class BaseUserViewSet(ModelViewSet):
+    """Базовый класс для ViewSet с фильтрацией по пользователю."""
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Category.objects.filter(user=self.request.user)
+        return self.model.objects.filter(user=self.request.user)
 
-@method_decorator(name='list', decorator=swagger_auto_schema(
-    operation_description="Возвращает список всех транзакций пользователя.",
-    operation_summary="Список транзакций",
-))
-@method_decorator(name='create', decorator=swagger_auto_schema(
-    operation_description="Создаёт новую транзакцию.",
-    operation_summary="Создание транзакции",
-))
-@method_decorator(name='retrieve', decorator=swagger_auto_schema(
-    operation_description="Возвращает конкретную транзакцию.",
-    operation_summary="Детали транзакции",
-))
-@method_decorator(name='update', decorator=swagger_auto_schema(
-    operation_description="Обновляет транзакцию.",
-    operation_summary="Обновление транзакции",
-))
-@method_decorator(name='partial_update', decorator=swagger_auto_schema(
-    operation_description="Частично обновляет транзакцию.",
-    operation_summary="Частичное обновление транзакции",
-))
-@method_decorator(name='destroy', decorator=swagger_auto_schema(
-    operation_description="Удаляет транзакцию.",
-    operation_summary="Удаление транзакции",
-))
-class TransactionViewSet(ModelViewSet):
+@apply_swagger_decorators('категорий')
+class CategoryViewSet(BaseUserViewSet):
+    serializer_class = CategorySerializer
+    model = Category
+
+@apply_swagger_decorators('транзакций')
+class TransactionViewSet(BaseUserViewSet):
     serializer_class = TransactionSerializer
-    permission_classes = [IsAuthenticated]
+    model = Transaction
     filter_backends = [DjangoFilterBackend]
     filterset_class = TransactionFilter
-
-    def get_queryset(self):
-        return Transaction.objects.filter(user=self.request.user)
 
 @method_decorator(name='get', decorator=swagger_auto_schema(
     operation_description="Возвращает аналитику по доходам и расходам пользователя.",
@@ -86,10 +82,8 @@ class AnalyticsView(APIView):
 
     def get(self, request):
         transactions = Transaction.objects.filter(user=request.user)
-
-        total_income = transactions.filter(type='income').aggregate(Sum('amount'))['amount__sum'] or 0
-        total_expense = transactions.filter(type='expense').aggregate(Sum('amount'))['amount__sum'] or 0
-
+        total_income = transactions.filter(type='income').aggregate(total=Sum('amount'))['total'] or 0
+        total_expense = transactions.filter(type='expense').aggregate(total=Sum('amount'))['total'] or 0
         category_summary = transactions.values('category__name').annotate(total=Sum('amount'))
 
         return Response({
@@ -107,12 +101,13 @@ class ExportCSVView(APIView):
 
     def get(self, request):
         transactions = Transaction.objects.filter(user=request.user)
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="transactions.csv"'
+        response = HttpResponse(content_type='text/csv', headers={
+            'Content-Disposition': 'attachment; filename="transactions.csv"'
+        })
 
         writer = csv.writer(response)
         writer.writerow(['Дата', 'Категория', 'Сумма', 'Тип'])
-        for transaction in transactions:
-            writer.writerow([transaction.date, transaction.category.name, transaction.amount, transaction.type])
+        for t in transactions:
+            writer.writerow([t.date, t.category.name, t.amount, t.type])
 
         return response
